@@ -462,20 +462,18 @@ func chunkStream(in io.Reader, pickedPattern uint32, hintCount int, hmeth string
 		}
 
 		if pat == pickedPattern {
-			backupOffset := off - 3 // need to do this because we've already read 3 bytes in
-
-			if backupOffset == chk.offset+int64((chk.consq+1)*patternSize) {
+			if off == chk.offset+int64((chk.consq+1)*patternSize) {
 				chk.consq++ // consume consecutive matching patterns
 				d := decodePat()
 				hasher.Write(d)
 				pat = 0
 			} else {
 				// we hit a new pattern so the current chunk gets pushed
-				chk.size = backupOffset - chk.offset
+				chk.size = off - chk.offset
 				chk.hash = base64.URLEncoding.EncodeToString(hasher.Sum(nil))
 				chunks = append(chunks, chk)
 
-				chk = chunk{"", pickedPattern, backupOffset, 0, 0}
+				chk = chunk{"", pickedPattern, off, 0, 0}
 				hasher.Reset()
 
 				hasher.Write(decodePat())
