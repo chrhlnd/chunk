@@ -7,7 +7,7 @@ import (
 	"os"
 	"runtime/pprof"
 
-	"chunk"
+	"github.com/chrhlnd/chunk"
 )
 
 var gen = flag.Bool("gen", false, "generate patch info")
