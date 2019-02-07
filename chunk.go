@@ -406,7 +406,7 @@ func bundleChunks(in io.ReadSeeker, chunks []chunk, budget int64, hmeth string) 
 
 			for off < end {
 				n, err := in.Read(buf[:])
-				if err != nil {
+				if err != nil && n == 0 {
 					break
 				}
 				hsz := int64(n)
