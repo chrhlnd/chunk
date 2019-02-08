@@ -369,7 +369,7 @@ func bundleChunks(in io.ReadSeeker, chunks []chunk, budget int64, hmeth string) 
 
 				for off < end {
 					n, err := in.Read(buf[:])
-					if err != nil {
+					if err != nil && (err != io.EOF || n == 0) {
 						break
 					}
 					hsz := int64(n)
@@ -455,7 +455,7 @@ func chunkStream(in io.Reader, pickedPattern uint32, hintCount int, hmeth string
 	var sz int
 	var err error
 
-	for sz, err = in.Read(data[:]); err == nil; sz, err = in.Read(data[:]) {
+	for sz, err = in.Read(data[:]); err == nil || (err == io.EOF && sz > 0); sz, err = in.Read(data[:]) {
 		pat = 0
 		for i := 0; i < sz; i++ {
 			pat |= uint32(data[i]) << uint(byteBitSize*((patternSize-1)-i))
@@ -482,6 +482,10 @@ func chunkStream(in io.Reader, pickedPattern uint32, hintCount int, hmeth string
 			hasher.Write(decodePat())
 		}
 		off += int64(sz)
+
+		if err == io.EOF {
+			break
+		}
 	}
 
 	// exited above due to eof, but still had some trailing bytes
@@ -516,7 +520,7 @@ func collectPatterns(in io.Reader, config *InspectConfig, stats *Stats) map[uint
 
 	var pat uint32
 
-	for sz, err := in.Read(data[:]); err == nil && (off == -1 || off < config.ScanSize); sz, err = in.Read(data[:]) {
+	for sz, err := in.Read(data[:]); (err == nil || (err == io.EOF && sz > 0)) && (off == -1 || off < config.ScanSize); sz, err = in.Read(data[:]) {
 		pat = 0
 		for i := 0; i < sz; i++ {
 			pat |= uint32(data[i]) << uint(byteBitSize*((patternSize-1)-i))
@@ -541,6 +545,9 @@ func collectPatterns(in io.Reader, config *InspectConfig, stats *Stats) map[uint
 
 		pats[pat] = st
 		off += int64(sz)
+		if err == io.EOF {
+			break
+		}
 	}
 
 	stats.AnalyzeSize = off
