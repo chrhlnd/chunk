@@ -192,14 +192,17 @@ func writePatchInfo(out io.Writer, chunks []chunk, chunkSize int64, hashMeth str
 		return nil
 	}
 
+	var patU uint32 = 0
 	if len(chunks) > 0 {
-		pat := strconv.FormatUint(uint64(chunks[0].pat), 10)
-		cnt := strconv.FormatUint(uint64(len(chunks)), 10)
+		patU = chunks[0].pat
+	}
 
-		err := writeLine(fmt.Sprint("pat: ", pat, " csize: ", chunkSize, " count: ", cnt, " hm: ", hashMeth))
-		if err != nil {
-			return err
-		}
+	pat := strconv.FormatUint(uint64(patU), 10)
+	cnt := strconv.FormatUint(uint64(len(chunks)), 10)
+
+	err := writeLine(fmt.Sprint("pat: ", pat, " csize: ", chunkSize, " count: ", cnt, " hm: ", hashMeth))
+	if err != nil {
+		return err
 	}
 
 	for _, c := range chunks {
@@ -366,7 +369,11 @@ func groupChunks(in io.ReadSeeker, pat uint32, chunkSize int64, hintCount int, h
 
 	stats.GroupingChunkByteSize = chunkSize
 	stats.GroupedChunkCount = len(chunks)
-	stats.FileSize = chunks[len(chunks)-1].offset + chunks[len(chunks)-1].size
+	if len(chunks) > 0 {
+		stats.FileSize = chunks[len(chunks)-1].offset + chunks[len(chunks)-1].size
+	} else {
+		stats.FileSize = 0
+	}
 
 	return chunks, nil
 }
