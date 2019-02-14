@@ -27,6 +27,8 @@ type InspectConfig struct {
 	ChunkSize int64 // (this makes manageable diffing chunks); otherwise we'd have a million chunks
 	// specify the hasher method to use its eaither sha256 or md5, default md5
 	HashMeth string
+	// pass in a pre figured out pattern
+	PickPattern uint32
 }
 
 // FileChunkDesc - output from analyze, describes chunks a file contains
@@ -70,6 +72,7 @@ var defaultConfig = InspectConfig{
 	10 * oneMeg,
 	400 * oneK,
 	"md5",
+	0,
 }
 
 func GetDefaultConfig() InspectConfig {
@@ -160,19 +163,26 @@ func Analyze(in io.ReadSeeker, config *InspectConfig) (*FileChunkDesc, *Stats, e
 	stats := &Stats{}
 	stats.AnalyzeSize = config.ScanSize
 
-	pats := collectPatterns(in, config, stats)
-	pick := pickPattern(pats, stats)
+	hintCount := 0
 
-	stats.PatternUsed = pick.pat
+	if config.PickPattern == 0 {
+		pats := collectPatterns(in, config, stats)
+		pick := pickPattern(pats, stats)
+		stats.PatternUsed = pick.pat
+		hintCount = pick.cnt
+	} else {
+		stats.PatternUsed = config.PickPattern
+		hintCount = 1000
+	}
 
-	chunks, err := groupChunks(in, pick.pat, config.ChunkSize, pick.cnt, config.HashMeth, stats)
+	chunks, err := groupChunks(in, stats.PatternUsed, config.ChunkSize, hintCount, config.HashMeth, stats)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	ret := FileChunkDesc{
 		HashMeth:  config.HashMeth,
-		Pat:       pick.pat,
+		Pat:       stats.PatternUsed,
 		ChunkSize: config.ChunkSize,
 		Chunks:    chunks,
 		Count:     len(chunks),

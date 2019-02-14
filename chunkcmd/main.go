@@ -20,6 +20,7 @@ var ssize = flag.Int("ssize", 10*1024*1024, "set the scan size to find a pattern
 var gsize = flag.Int("gsize", 400*1024, "set the grouping size to find a pattern")
 var meth = flag.String("meth", "one", "pick one or two")
 var verbose = flag.Bool("v", false, "print some extra stuff")
+var pat = flag.Uint("pattern", 0, "if you know the pattern tell generate")
 
 const bufferSize = 1024 * 64
 
@@ -102,6 +103,9 @@ func main() {
 				defer fout.Close()
 
 				cfg := chunk.GetDefaultConfig()
+				if *pat != 0 {
+					cfg.PickPattern = uint32(*pat)
+				}
 				cfg.ScanSize = int64(*ssize)
 				cfg.ChunkSize = int64(*gsize)
 				if *meth == "one" {
