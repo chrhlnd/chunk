@@ -21,6 +21,8 @@ type InspectConfig struct {
 	StepSize int
 	// how far to scan into the binary default 10meg, -1 means the whole file
 	ScanSize int64
+	// while scanning what size to garbage collect patterns
+	WindowSize int64
 	// group consecutive byte chunks until we're over this byte limit 40k default
 	ChunkSize int64 // (this makes manageable diffing chunks); otherwise we'd have a million chunks
 	// specify the hasher method to use its eaither sha256 or md5, default md5
@@ -39,11 +41,13 @@ type FileChunkDesc struct {
 // Stats - report back some analyasis stats, useful possibly to inspect making better pattern finders
 type Stats struct {
 	AnalyzeSize           int64
+	WindowSize            int64
 	FileSize              int64
 	PatternUsed           uint32
 	RawChunkCount         int
 	GroupedChunkCount     int
 	GroupingChunkByteSize int64
+	Picked                PatternInfo
 	Top10Patterns         []PatternInfo
 }
 
@@ -62,6 +66,7 @@ const oneMeg = oneK * oneK
 
 var defaultConfig = InspectConfig{
 	4,
+	10 * oneMeg,
 	10 * oneMeg,
 	400 * oneK,
 	"md5",
@@ -98,6 +103,20 @@ func (fcd *FileChunkDesc) Write(out io.Writer) error {
 // ReadFileChunkDesc - create a FileChunkDesc from a serialized version
 func ReadFileChunkDesc(in bufio.Reader) (*FileChunkDesc, error) {
 	return readPatchInfo(in)
+}
+
+func Scan(in io.ReadSeeker, size int64) (*Stats, error) {
+	config := defaultConfig
+
+	config.WindowSize = size
+	config.ScanSize = -1
+
+	stats := &Stats{}
+
+	pats := collectPatterns(in, &config, stats)
+	pickPattern(pats, stats)
+
+	return stats, nil
 }
 
 // Analyze2 - inspect the input stream for a pattern then write out the chunks to the out stream
@@ -635,7 +654,22 @@ func collectPatterns2(in io.Reader, config *InspectConfig, stats *Stats) ([]*usa
 	return pats
 }
 
-func collectPatterns(in io.Reader, config *InspectConfig, stats *Stats) map[uint32]usage {
+func sortPatterns(pats map[uint32]usage, amt int) []usage {
+	keep := make([]usage, amt)
+	for _, usage := range pats {
+		find := sort.Search(len(keep), func (i int) bool { return usage.cnt > keep[i].cnt || (usage.cnt == keep[i].cnt && usage.min < keep[i].min); })
+		if find < len(keep) {
+			if find+1 < len(keep) {
+				copy(keep[find+1:],keep[find:])
+			}
+			keep[find] = usage
+		}
+	}
+
+	return keep
+}
+
+func collectPatterns(in io.Reader, config *InspectConfig, stats *Stats) []usage {
 	var off int64
 
 	pats := make(map[uint32]usage)
@@ -644,7 +678,25 @@ func collectPatterns(in io.Reader, config *InspectConfig, stats *Stats) map[uint
 
 	var pat uint32
 
+	gcPats := func (amt int) map[uint32]usage {
+		//log.Print("GCing patterns keeping ", amt)
+		keep := sortPatterns(pats, amt)
+
+		ret := make(map[uint32]usage, amt)
+		for _, v := range keep {
+			ret[v.pat] = v
+		}
+
+		return ret
+	}
+
 	for sz, err := in.Read(data[:]); (err == nil || (err == io.EOF && sz > 0)) && (config.ScanSize == -1 || off < config.ScanSize); sz, err = in.Read(data[:]) {
+
+		if config.WindowSize > 0 && (off % config.WindowSize) == 0 && len(pats) > 0 {
+			// garbage collect this only keeping the top 1000 by cnt
+			pats = gcPats(1000)
+		}
+
 		pat = 0
 		for i := 0; i < sz; i++ {
 			pat |= uint32(data[i]) << uint(byteBitSize*((patternSize-1)-i))
@@ -675,8 +727,9 @@ func collectPatterns(in io.Reader, config *InspectConfig, stats *Stats) map[uint
 	}
 
 	stats.AnalyzeSize = off
+	stats.WindowSize = config.WindowSize
 
-	return pats
+	return sortPatterns(pats, 1000)
 }
 
 func pickPattern2(pats []*usage, stats *Stats) usage {
@@ -712,28 +765,10 @@ func pickPattern2(pats []*usage, stats *Stats) usage {
 	return *pick
 }
 
-func pickPattern(pats map[uint32]usage, stats *Stats) usage {
-	top := make([]usage, 10)
-
-	// find the top 10 occuring patterns
-
-	for _, v := range pats {
-		for i := 0; i < len(top); i++ {
-			if v.cnt > top[i].cnt {
-				if i < len(top)-1 {
-					for z := len(top) - 2; z >= i; z-- {
-						top[z+1] = top[z]
-					}
-				}
-				top[i] = v
-				break
-			}
-		}
-	}
-
-	pats = nil
-
+func pickPattern(top []usage, stats *Stats) usage {
 	var pick usage
+
+	top = top[0:10]
 
 	// pick the pattern with some chunkiness but not too granular
 	//  so the .4 below here is picking a pattern that is 40% smaller then the current pick
@@ -766,6 +801,16 @@ func pickPattern(pats map[uint32]usage, stats *Stats) usage {
 			PosMin:      v.min,
 		})
 	}
+
+	stats.Picked = PatternInfo{Count: pick.cnt,
+		AvgByteSpan: pick.avg,
+		Conseq: pick.conseq,
+		Pat: pick.pat,
+		PosMax: pick.max,
+		PosMin: pick.min,
+	}
+
+	stats.PatternUsed = stats.Picked.Pat
 
 	return pick
 }
